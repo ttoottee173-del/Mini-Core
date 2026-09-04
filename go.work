@@ -1,0 +1,6 @@
+go 1.27.1
+
+use (
+	./pkg/api
+	./services/auth-service
+)
