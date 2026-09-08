@@ -14,8 +14,10 @@ const (
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid input")
-	ErrEmailTaken   = errors.New("email already taken")
+	ErrInvalidInput       = errors.New("invalid input")
+	ErrEmailTaken         = errors.New("email already taken")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrNotFound           = errors.New("not found")
 )
 
 type User struct {
@@ -25,8 +27,12 @@ type User struct {
 	Role         Role
 }
 
+func NormalizeEmail(e string) string {
+	return strings.ToLower(strings.TrimSpace(e))
+}
+
 func NewUser(email, passwordHash string) (*User, error) {
-	email = strings.ToLower(strings.TrimSpace(email))
+	email = NormalizeEmail(email)
 	if !strings.Contains(email, "@") {
 		return nil, ErrInvalidInput
 	}
