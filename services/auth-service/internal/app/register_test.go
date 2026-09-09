@@ -24,9 +24,13 @@ func (f *fakeRepo) Create(_ context.Context, u *domain.User) error {
 	return nil
 }
 
+type fakePub struct{ called int }
+
+func (f *fakePub) UserRegistered(_ context.Context, _, _ string) { f.called++ }
+
 func TestRegister_Ok(t *testing.T) {
 	repo := &fakeRepo{} // 1. ARRANGE — подготовка
-	svc := app.NewRegister(repo)
+	svc := app.NewRegister(repo, &fakePub{})
 
 	u, err := svc.Register(context.Background(), "  Ivan@Example.COM ", "secret123") // 2. ACT — действие
 
@@ -46,7 +50,7 @@ func TestRegister_Ok(t *testing.T) {
 
 func TestRegister_ShortPassword(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := app.NewRegister(repo)
+	svc := app.NewRegister(repo, &fakePub{})
 
 	_, err := svc.Register(context.Background(), "ivan@example.com", "123")
 
@@ -60,7 +64,7 @@ func TestRegister_ShortPassword(t *testing.T) {
 
 func TestRegister_EmailTaken(t *testing.T) {
 	repo := &fakeRepo{err: domain.ErrEmailTaken} // вилка притворяется базой с занятым email
-	svc := app.NewRegister(repo)
+	svc := app.NewRegister(repo, &fakePub{})
 
 	_, err := svc.Register(context.Background(), "ivan@example.com", "secret123")
 
@@ -71,7 +75,7 @@ func TestRegister_EmailTaken(t *testing.T) {
 
 func TestRegister_BadEmail(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := app.NewRegister(repo)
+	svc := app.NewRegister(repo, &fakePub{})
 
 	_, err := svc.Register(context.Background(), "No-dogs", "secret123")
 

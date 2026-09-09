@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package bank.customer.v1;
+
+service CustomerService {
+  rpc GetCustomer(GetCustomerRequest) returns (Customer);
+  rpc UpdateProfile(UpdateProfileRequest) returns (Customer);
+  rpc GetCustomerStatus(GetCustomerStatusRequest) returns (GetCustomerStatusResponse);
+  rpc ListCustomers(ListCustomersRequest) returns (ListCustomersResponse);
+}
+
+message Customer {
+  string customer_id = 1;
+  string user_id = 2;
+  string first_name = 3;
+  string last_name = 4;
+  string phone = 5;
+  string date_of_birth = 6; // YYYY-MM-DD
+  string address = 7;
+  string citizenship = 8;
+  string status = 9;
+}
+
+message GetCustomerRequest {
+  string user_id = 1;
+}
+
+message UpdateProfileRequest {
+  string user_id = 1;
+  string first_name = 2;
+  string last_name = 3;
+  string phone = 4;
+  string date_of_birth = 5;
+  string address = 6;
+  string citizenship = 7;
+}
+
+message GetCustomerStatusRequest {
+  string user_id = 1;
+}
+
+message GetCustomerStatusResponse {
+  string user_id = 1;
+  string status = 2;
+}
+
+message ListCustomersRequest {
+  int32 page_size = 1;
+  string page_token = 2;   // это offset (просто число строкой)
+  string status_filter = 3; // "", "NEW", "PROFILE_FILLED", ...
+}
+
+message ListCustomersResponse {
+  repeated Customer items = 1;
+  string next_page_token = 2;
+}
