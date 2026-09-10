@@ -18,3 +18,12 @@ kafka-lag:
 
 kafka-read:
 	docker exec -it mini-core-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic auth.events --from-beginning
+
+run-auth:
+	cd services/auth-service && go run ./cmd/auth-service
+
+run-customer:
+	cd services/customer-service && go run ./cmd/customer-service
+
+run-gateway:
+	cd services/api-gateway && go run ./cmd/api-gateway
