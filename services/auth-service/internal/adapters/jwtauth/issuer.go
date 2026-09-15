@@ -14,7 +14,7 @@ import (
 // Issuer — реализация TokenIssuer для выпуска JWT.
 // Хранит приватный RSA-ключ для подписи токенов.
 type Issuer struct {
-	key *rsa.PrivateKey // ← импорт crypto/rsa добавь
+	key *rsa.PrivateKey
 }
 
 // NewIssuer создаёт новый Issuer из PEM-закодированного приватного ключа RSA.
@@ -38,10 +38,10 @@ func NewIssuer(privateKeyPEM []byte) (*Issuer, error) {
 func (i *Issuer) IssueAccess(userID, role string, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"sub":  userID, // кто
-		"role": role,   // роль для RBAC
+		"sub":  userID,
+		"role": role,
 		"iat":  now.Unix(),
-		"exp":  now.Add(ttl).Unix(), // когда протухнет
+		"exp":  now.Add(ttl).Unix(),
 	})
 	return tok.SignedString(i.key)
 }
