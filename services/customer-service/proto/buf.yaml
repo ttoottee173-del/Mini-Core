@@ -1,0 +1,9 @@
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    # Customer возвращается и из GetCustomer, и из UpdateProfile —
+    # сознательно один message для обоих RPC.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME

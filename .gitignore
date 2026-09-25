@@ -1,2 +1,4 @@
 services/auth-service/keys/
 *.pem
+bin/
+.vscode

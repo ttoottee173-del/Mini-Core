@@ -1,8 +1,7 @@
 go 1.27.1
 
 use (
-	./pkg/api
-	./services/api-gateway
-	./services/auth-service
-	./services/customer-service
+        ./services/api-gateway
+        ./services/auth-service
+        ./services/customer-service
 )

@@ -1,0 +1,9 @@
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    # Login и Refresh возвращают одинаковый набор полей (access + refresh),
+    # поэтому сознательно используем один message для двух RPC.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME

@@ -2,24 +2,24 @@ package postgres
 
 import (
 	"context"
-	"errors"
-	"mini-core/services/auth-service/internal/domain"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"mini-core/services/auth-service/internal/adapters/postgres/db"
+	"mini-core/services/auth-service/internal/domain"
 )
 
 // RefreshRepo — репозиторий для работы с refresh-токенами в PostgreSQL.
 // Хранит хеши токенов, идентификатор пользователя и время истечения.
+// Как и UserRepo, это тонкая обёртка над sqlc-пакетом db.
 type RefreshRepo struct {
-	pool *pgxpool.Pool
+	q *db.Queries
 }
 
 // NewRefreshRepo — конструктор RefreshRepo.
-// Принимает пул соединений и возвращает адаптер.
 func NewRefreshRepo(pool *pgxpool.Pool) *RefreshRepo {
-	return &RefreshRepo{pool: pool}
+	return &RefreshRepo{q: db.New(pool)}
 }
 
 // Create сохраняет хеш refresh-токена в таблицу refresh_tokens.
@@ -30,32 +30,33 @@ func NewRefreshRepo(pool *pgxpool.Pool) *RefreshRepo {
 //
 // Возвращает ошибку, если вставка не удалась (например, нарушение внешнего ключа).
 func (r *RefreshRepo) Create(ctx context.Context, tokenHash, userID string, expiresAt time.Time) error {
-	_, err := r.pool.Exec(ctx,
-		`INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
-		tokenHash, userID, expiresAt,
-	)
-	return err
+	return r.q.CreateRefreshToken(ctx, db.CreateRefreshTokenParams{
+		TokenHash: tokenHash,
+		UserID:    userID,
+		ExpiresAt: expiresAt, // override в sqlc.yaml: timestamptz → time.Time
+	})
 }
 
+// FindByHash возвращает токен по хешу. Обратите внимание: RevokedAt
+// в БД допускает NULL, поэтому в сгенерированной структуре это *time.Time —
+// ровно тот же тип, что и в доменной модели, маппинг получается тривиальным.
 func (r *RefreshRepo) FindByHash(ctx context.Context, hash string) (*domain.RefreshToken, error) {
-	var rt domain.RefreshToken
-	var revoked *time.Time
-	err := r.pool.QueryRow(ctx,
-		`SELECT token_hash, user_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = $1`, hash,
-	).Scan(&rt.Hash, &rt.UserID, &rt.ExpiresAt, &revoked)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound
-	}
+	row, err := r.q.GetRefreshToken(ctx, hash)
 	if err != nil {
-		return nil, err
+		return nil, mapUserErr(err) // тот же перевод ErrNoRows → ErrNotFound
 	}
-	rt.RevokedAt = revoked
-	return &rt, nil
+	return &domain.RefreshToken{
+		Hash:      row.TokenHash,
+		UserID:    row.UserID,
+		ExpiresAt: row.ExpiresAt,
+		RevokedAt: row.RevokedAt,
+	}, nil
 }
 
+// Revoke помечает токен отозванным (записывает время отзыва).
 func (r *RefreshRepo) Revoke(ctx context.Context, hash string, at time.Time) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE refresh_tokens SET revoked_at = $1 WHERE token_hash = $2`, at, hash,
-	)
-	return err
+	return r.q.RevokeRefreshToken(ctx, db.RevokeRefreshTokenParams{
+		RevokedAt: &at, // nullable-колонка → *time.Time
+		TokenHash: hash,
+	})
 }

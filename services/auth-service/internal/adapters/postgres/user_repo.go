@@ -1,6 +1,9 @@
 // Package postgres реализует адаптеры для работы с PostgreSQL.
 // Содержит репозитории для пользователей (UserRepo) и refresh-токенов (RefreshRepo).
-// Преобразует ошибки БД в доменные ошибки (domain.ErrNotFound, domain.ErrEmailTaken).
+// Начиная с рефакторинга на sqlc сами SQL-запросы живут в queries/*.sql,
+// а здесь остаётся только «перевод» между миром БД и миром домена:
+// строки сгенерированных структур → доменные модели,
+// ошибки Postgres → доменные ошибки (domain.ErrNotFound, domain.ErrEmailTaken).
 package postgres
 
 import (
@@ -11,71 +14,78 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"mini-core/services/auth-service/internal/adapters/postgres/db"
 	"mini-core/services/auth-service/internal/domain"
 )
 
+var ErrEmailAlreadyRegistered = "23505"
+
 // UserRepo — структура, реализующая интерфейс app.UserRepository.
-// Хранит пул соединений с PostgreSQL.
+// Внутри — не пул, а объект Queries, сгенерированный sqlc:
+// на каждый запрос из queries/users.sql у него есть типизированный метод.
 type UserRepo struct {
-	pool *pgxpool.Pool
+	q *db.Queries
 }
 
 // NewUserRepo — конструктор для UserRepo.
-// Принимает пул соединений и возвращает готовый адаптер.
+// db.New принимает любой объект, умеющий Exec/Query/QueryRow —
+// пул соединений pgxpool как раз такой, поэтому подходим мы им.
 func NewUserRepo(pool *pgxpool.Pool) *UserRepo {
-	return &UserRepo{pool: pool}
+	return &UserRepo{q: db.New(pool)}
 }
 
 // Create сохраняет пользователя в таблицу users.
-// Использует параметризованный запрос INSERT.
 // Если возникает ошибка нарушения уникальности (код 23505),
-// преобразует её в domain.ErrEmailTaken.
-// Все остальные ошибки возвращаются как есть (они будут обработаны выше).
-// Важно: мы не отдаём наружу сырую ошибку PostgreSQL, чтобы не раскрывать детали реализации.
+// преобразует её в domain.ErrEmailTaken — выше по стеку никто
+// не должен знать про коды ошибок Postgres.
 func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
-	_, err := r.pool.Exec(ctx,
-		`INSERT INTO users (id, email, password_hash, role) VALUES ($1, $2, $3, $4)`,
-		u.ID, u.Email, u.PasswordHash, string(u.Role),
-	)
+	err := r.q.CreateUser(ctx, db.CreateUserParams{
+		ID:           u.ID,
+		Email:        u.Email,
+		PasswordHash: u.PasswordHash,
+		Role:         string(u.Role), // доменный Role → строка для БД
+	})
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // 23505 = unique violation в Postgres
+	if errors.As(err, &pgErr) && pgErr.Code == ErrEmailAlreadyRegistered { // 23505 = unique violation в Postgres
 		return domain.ErrEmailTaken // перевод: «язык БД» → «язык домена»
 	}
 	return err
 }
 
 // FindByEmail ищет пользователя по нормализованному email.
-// Возвращает domain.ErrNotFound, если запись отсутствует.
-// В остальных случаях возвращает ошибку БД (она будет обёрнута выше).
-// Роль преобразуется из строки в domain.Role.
+// pgx.ErrNoRows («в БД пусто») превращается в domain.ErrNotFound.
 func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
-	var role string
-	u := &domain.User{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role FROM users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound // перевод: «пусто в БД» → язык домена
-	}
+	row, err := r.q.GetUserByEmail(ctx, email)
 	if err != nil {
-		return nil, err
+		return nil, mapUserErr(err)
 	}
-	u.Role = domain.Role(role)
-	return u, nil
+	return rowToUser(row.ID, row.Email, row.PasswordHash, row.Role), nil
 }
 
+// FindByID — то же самое, но по первичному ключу.
 func (r *UserRepo) FindByID(ctx context.Context, id string) (*domain.User, error) {
-	var role string
-	u := &domain.User{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role FROM users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound
-	}
+	row, err := r.q.GetUserByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, mapUserErr(err)
 	}
-	u.Role = domain.Role(role)
-	return u, nil
+	return rowToUser(row.ID, row.Email, row.PasswordHash, row.Role), nil
+}
+
+// rowToUser — маппинг плоской строки из БД в доменную модель.
+// Роль хранится строкой, здесь она превращается обратно в domain.Role.
+func rowToUser(id, email, passwordHash, role string) *domain.User {
+	return &domain.User{
+		ID:           id,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Role:         domain.Role(role),
+	}
+}
+
+// mapUserErr — единый перевод ошибок драйвера в ошибки домена.
+func mapUserErr(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound // перевод: «пусто в БД» → язык домена
+	}
+	return err
 }
