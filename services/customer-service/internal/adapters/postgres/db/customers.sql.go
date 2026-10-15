@@ -33,6 +33,44 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 	return err
 }
 
+const getCustomerByID = `-- name: GetCustomerByID :one
+SELECT id, user_id, first_name, last_name, phone,
+       coalesce(to_char(date_of_birth, 'YYYY-MM-DD'), '')::text AS date_of_birth,
+       address, citizenship, status
+FROM customers
+WHERE id = $1
+`
+
+type GetCustomerByIDRow struct {
+	ID          string
+	UserID      string
+	FirstName   string
+	LastName    string
+	Phone       string
+	DateOfBirth string
+	Address     string
+	Citizenship string
+	Status      string
+}
+
+// Профиль по id (его присылают события kyc-service в customer_id).
+func (q *Queries) GetCustomerByID(ctx context.Context, id string) (GetCustomerByIDRow, error) {
+	row := q.db.QueryRow(ctx, getCustomerByID, id)
+	var i GetCustomerByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.DateOfBirth,
+		&i.Address,
+		&i.Citizenship,
+		&i.Status,
+	)
+	return i, err
+}
+
 const getCustomerByUserID = `-- name: GetCustomerByUserID :one
 SELECT id, user_id, first_name, last_name, phone,
        coalesce(to_char(date_of_birth, 'YYYY-MM-DD'), '')::text AS date_of_birth,
@@ -229,5 +267,23 @@ func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) 
 		arg.Status,
 		arg.UserID,
 	)
+	return err
+}
+
+const updateCustomerStatus = `-- name: UpdateCustomerStatus :exec
+UPDATE customers
+SET status    = $1,
+    updated_at = now()
+WHERE id = $2
+`
+
+type UpdateCustomerStatusParams struct {
+	Status     string
+	CustomerID string
+}
+
+// Смена статуса по событиям KYC (ON_KYC / ACTIVE / REJECTED).
+func (q *Queries) UpdateCustomerStatus(ctx context.Context, arg UpdateCustomerStatusParams) error {
+	_, err := q.db.Exec(ctx, updateCustomerStatus, arg.Status, arg.CustomerID)
 	return err
 }

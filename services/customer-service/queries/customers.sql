@@ -33,6 +33,21 @@ SET first_name    = @first_name,
     updated_at    = now()
 WHERE user_id = @user_id;
 
+-- Профиль по id (его присылают события kyc-service в customer_id).
+-- name: GetCustomerByID :one
+SELECT id, user_id, first_name, last_name, phone,
+       coalesce(to_char(date_of_birth, 'YYYY-MM-DD'), '')::text AS date_of_birth,
+       address, citizenship, status
+FROM customers
+WHERE id = $1;
+
+-- Смена статуса по событиям KYC (ON_KYC / ACTIVE / REJECTED).
+-- name: UpdateCustomerStatus :exec
+UPDATE customers
+SET status    = @status,
+    updated_at = now()
+WHERE id = @customer_id;
+
 -- Список без фильтра. Фильтр по статусу вынесен в отдельный запрос ниже.
 -- name: ListCustomers :many
 SELECT id, user_id, first_name, last_name, phone,

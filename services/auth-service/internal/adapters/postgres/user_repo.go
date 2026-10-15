@@ -18,7 +18,9 @@ import (
 	"mini-core/services/auth-service/internal/domain"
 )
 
-var ErrEmailAlreadyRegistered = "23505"
+// pgUniqueViolation — код ошибки PostgreSQL "unique_violation".
+// Возникает при попытке вставить дубликат по UNIQUE- или PK-ограничению.
+const pgUniqueViolation = "23505"
 
 // UserRepo — структура, реализующая интерфейс app.UserRepository.
 // Внутри — не пул, а объект Queries, сгенерированный sqlc:
@@ -46,8 +48,9 @@ func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
 		Role:         string(u.Role), // доменный Role → строка для БД
 	})
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == ErrEmailAlreadyRegistered { // 23505 = unique violation в Postgres
-		return domain.ErrEmailTaken // перевод: «язык БД» → «язык домена»
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+		// перевод: «язык БД» → «язык домена»
+		return domain.ErrEmailTaken
 	}
 	return err
 }

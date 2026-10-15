@@ -1,0 +1,9 @@
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    # Application возвращается из всех семи RPC — сознательно один
+    # message вместо семи «уникальных» ответов.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME

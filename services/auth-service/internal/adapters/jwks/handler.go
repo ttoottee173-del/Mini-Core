@@ -5,16 +5,16 @@ package jwks
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 // Handler собирает JWKS-документ из PEM-файла публичного ключа
-// и возвращает http.HandlerFunc, который его отдаёт.
+// и возвращает gin.HandlerFunc, который его отдаёт.
 // Делаем это один раз при старте: ключ в процессе работы не меняется.
-func Handler(publicPEM []byte) (http.HandlerFunc, error) {
+func Handler(publicPEM []byte) (gin.HandlerFunc, error) {
 	pub, err := jwt.ParseRSAPublicKeyFromPEM(publicPEM)
 	if err != nil {
 		return nil, err
@@ -29,9 +29,10 @@ func Handler(publicPEM []byte) (http.HandlerFunc, error) {
 			"e": base64.RawURLEncoding.EncodeToString(bigIntBytes(pub.E)),
 		}},
 	}
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(doc)
+	// c.JSON сам ставит Content-Type: application/json и кодирует doc —
+	// ни w.Header(), ни json.NewEncoder здесь не нужны.
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, doc)
 	}, nil
 }
 

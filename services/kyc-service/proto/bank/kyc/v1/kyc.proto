@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package bank.kyc.v1;
+
+// KycService — заявки на верификацию клиентов (центр онбординга).
+// Клиент подаёт заявку, авто-чеки фильтруют очевидный отказ,
+// офицер забирает заявку в работу и выносит вердикт.
+service KycService {
+  rpc SubmitApplication(SubmitApplicationRequest) returns (Application);
+  rpc GetApplication(GetApplicationRequest) returns (Application);
+  rpc ListApplications(ListApplicationsRequest) returns (ListApplicationsResponse); // очередь для OFFICER
+  rpc ClaimApplication(ClaimApplicationRequest) returns (Application);              // OFFICER берёт в работу
+  rpc ApproveApplication(ApproveApplicationRequest) returns (Application);          // OFFICER
+  rpc RejectApplication(RejectApplicationRequest) returns (Application);            // OFFICER, с причиной
+  rpc RequestMoreDocuments(RequestMoreDocumentsRequest) returns (Application);
+}
+
+// Application — заявка на верификацию. ФИО и дата рождения снимаются
+// «снимком» из профиля в момент подачи: авто-чеки работают с копией,
+// даже если клиент потом попытается что-то поменять.
+message Application {
+  string application_id = 1;
+  string customer_id = 2;
+  string status = 3;            // SUBMITTED / AUTO_CHECKS / IN_REVIEW / APPROVED / AUTO_REJECTED / REJECTED / DOCS_REQUESTED
+  string reviewer_id = 4;       // OFFICER, который забрал заявку в работу (пусто — никто)
+  string reject_reason = 5;     // заполнено для REJECTED / AUTO_REJECTED
+  string created_at = 6;        // RFC3339, UTC
+  string updated_at = 7;        // RFC3339, UTC
+}
+
+message SubmitApplicationRequest {
+  // user_id из JWT: заявка подаётся от лица владельца токена,
+  // профиль в customer-service ищем по нему же.
+  string user_id = 1;
+}
+
+message GetApplicationRequest {
+  string application_id = 1;
+}
+
+message ListApplicationsRequest {
+  int32 page_size = 1;
+  string page_token = 2;    // offset (просто число строкой), как в customer-service
+  string status_filter = 3; // "", "SUBMITTED", "IN_REVIEW", ...
+}
+
+message ListApplicationsResponse {
+  repeated Application items = 1;
+  string next_page_token = 2;
+}
+
+message ClaimApplicationRequest {
+  string application_id = 1;
+  string officer_id = 2; // кто забирает (user_id офицера из токена)
+}
+
+message ApproveApplicationRequest {
+  string application_id = 1;
+  string officer_id = 2;
+  string comment = 3; // в аудит, необязательно
+}
+
+message RejectApplicationRequest {
+  string application_id = 1;
+  string officer_id = 2;
+  string reason = 3; // обязательна: клиент увидит её в отказе
+}
+
+message RequestMoreDocumentsRequest {
+  string application_id = 1;
+  string officer_id = 2;
+  string comment = 3; // какие именно документы дослать
+}

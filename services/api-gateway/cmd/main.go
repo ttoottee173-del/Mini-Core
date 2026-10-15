@@ -17,12 +17,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	authv1 "mini-core/services/auth-service/gen/bank/auth/v1"
-	customerv1 "mini-core/services/customer-service/gen/bank/customer/v1"
 	"mini-core/services/api-gateway/internal/config"
 	"mini-core/services/api-gateway/internal/httpapi"
 	"mini-core/services/api-gateway/internal/ratelimit"
 	"mini-core/services/api-gateway/internal/verifier"
+	authv1 "mini-core/services/auth-service/gen/bank/auth/v1"
+	customerv1 "mini-core/services/customer-service/gen/bank/customer/v1"
+	kycv1 "mini-core/services/kyc-service/gen/bank/kyc/v1"
 )
 
 // fatal — логируем и выходим явно (os.Exit не выполняет defer'ы!).
@@ -65,10 +66,16 @@ func main() {
 		fatal(log, "customer conn", err)
 	}
 	defer custConn.Close()
+	kycConn, err := grpc.NewClient(cfg.KycAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		fatal(log, "kyc conn", err)
+	}
+	defer kycConn.Close()
 
 	h := httpapi.New(log, ver, limiter,
 		authv1.NewAuthServiceClient(authConn),
 		customerv1.NewCustomerServiceClient(custConn),
+		kycv1.NewKycServiceClient(kycConn),
 	)
 
 	httpSrv := &http.Server{

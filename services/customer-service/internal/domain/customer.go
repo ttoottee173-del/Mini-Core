@@ -19,6 +19,10 @@ const (
 var ErrNotFound = errors.New("customer not found")
 var ErrProfileLocked = errors.New("profile locked: KYC started")
 
+// ErrBadTransition — событие требует переход, которого нет в машине
+// статусов (например, approved для клиента, которого не отправляли на KYC).
+var ErrBadTransition = errors.New("status transition not allowed")
+
 // allowedTransitions — таблица переходов статусной машины.
 var allowedTransitions = map[CustomerStatus][]CustomerStatus{
 	StatusNew:           {StatusProfileFilled, StatusBlocked},

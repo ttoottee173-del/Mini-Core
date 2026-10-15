@@ -1,1 +1,2 @@
 CREATE DATABASE customer_db OWNER dev;
+CREATE DATABASE kyc_db OWNER dev;

@@ -1,0 +1,15 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "migrations"        # схема берётся из goose-миграций сервиса
+    queries: "queries"          # здесь лежит «источник правды» по запросам
+    gen:
+      go:
+        package: "db"
+        out: "internal/adapters/postgres/db"  # сгенерированный код живёт в internal
+        sql_package: "pgx/v5"   # sqlc генерит код поверх драйвера pgx/v5
+        overrides:
+          # Учебное упрощение: UUID держим строками, чтобы домен не зависел
+          # от pgtype. Постgres сам проверит формат при вставке.
+          - db_type: "uuid"
+            go_type: "string"

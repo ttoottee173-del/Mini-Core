@@ -13,6 +13,7 @@ type Claims struct {
 }
 
 // Verifier проверяет подпись access-токенов ПУБЛИЧНЫМ ключом auth-service.
+// Это ровно тот round-trip из твоего теста RealIssuer — только ключ чужой.
 type Verifier struct {
 	key    jwt.Keyfunc
 	parser *jwt.Parser

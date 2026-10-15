@@ -6,124 +6,128 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-// Middleware — обёртка над хендлером.
-type Middleware func(http.Handler) http.Handler
-
-// Chain наворачивает в порядке перечисления: первый — самый внешний.
-func Chain(h http.Handler, mws ...Middleware) http.Handler {
-	for i := len(mws) - 1; i >= 0; i-- {
-		h = mws[i](h)
-	}
-	return h
-}
+// В Gin middleware — это обычный gin.HandlerFunc (та же сигнатура, что и у
+// хендлера), который в конце зовёт c.Next() — «передай управление дальше».
+// Каждый конструктор ниже — фабрика: настраивает прослойку и возвращает её.
+// Порядок прослоек задаётся в Routes(), здесь только их механика.
 
 // recoverMW — паника в хендлере не роняет весь gateway (500 вместо смерти).
-func (s *Server) recoverMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) recoverMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if p := recover(); p != nil {
-				s.log.Error("panic", "err", p, "path", r.URL.Path)
-				s.writeError(w, r, http.StatusInternalServerError, "INTERNAL", "internal error")
+				s.log.Error("panic", "err", p, "path", c.Request.URL.Path)
+				s.writeError(c, http.StatusInternalServerError, "INTERNAL", "internal error")
 			}
 		}()
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
 // requestIDMW — берём X-Request-ID или генерим; отдаём в заголовке ответа.
-func (s *Server) requestIDMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get("X-Request-ID")
+func (s *Server) requestIDMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rid := c.GetHeader("X-Request-ID")
 		if rid == "" {
 			rid = uuid.NewString()
 		}
-		w.Header().Set("X-Request-ID", rid)
-		next.ServeHTTP(w, r.WithContext(withRequestID(r.Context(), rid)))
-	})
-}
-
-// statusRecorder — запоминает статус ответа для access-лога.
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
+		c.Header("X-Request-ID", rid)
+		c.Set(keyRequestID, rid)
+		c.Next()
+	}
 }
 
 // logMW — access-лог: метод, путь, статус, длительность, request-id.
-func (s *Server) logMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// В Gin итоговый статус уже доступен через c.Writer.Status(), поэтому
+// отдельный recorder-тип (как это делается на голом net/http) не нужен.
+func (s *Server) logMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		c.Next() // сначала запрос идёт дальше; лог пишем ПОСЛЕ — статус уже известен
 		s.log.Info("access",
-			"method", r.Method, "path", r.URL.Path,
-			"status", rec.status, "dur", time.Since(start).Round(time.Microsecond),
-			"request_id", requestIDFromCtx(r.Context()),
+			"method", c.Request.Method, "path", c.Request.URL.Path,
+			"status", c.Writer.Status(), "dur", time.Since(start).Round(time.Microsecond),
+			"request_id", requestIDOf(c),
 		)
-	})
+	}
 }
 
 // corsMW — для разработки разрешаем всё; в проде так нельзя (долговая книжка).
-func (s *Server) corsMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
+func (s *Server) corsMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := c.Writer.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+		if c.Request.Method == http.MethodOptions {
+			// preflight: ответить 204 с заголовками и НЕ пускать запрос дальше
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
-// authMW — «Bearer <token>» → проверка подписи → claims в контекст.
-func (s *Server) authMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// authMW — «Bearer <token>» → проверка подписи → claims в контекст Gin.
+// writeError уже прерывает цепочку (Abort внутри), поэтому после него
+// достаточно простого return.
+func (s *Server) authMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		const prefix = "Bearer "
-		h := r.Header.Get("Authorization")
+		h := c.GetHeader("Authorization")
 		if !strings.HasPrefix(h, prefix) {
-			s.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "нужен Authorization: Bearer <token>")
+			s.writeError(c, http.StatusUnauthorized, "UNAUTHENTICATED", "нужен Authorization: Bearer <token>")
 			return
 		}
 		claims, err := s.verifier.Verify(strings.TrimPrefix(h, prefix))
 		if err != nil {
-			s.writeError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "токен невалиден или истёк")
+			s.writeError(c, http.StatusUnauthorized, "UNAUTHENTICATED", "токен невалиден или истёк")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withClaims(r.Context(), claims)))
-	})
+		c.Set(keyClaims, claims) // дальше по цепочке их достанет claimsOf
+		c.Next()
+	}
 }
 
 // rateLimitMW — лимит на user_id (если уже авторизован), иначе на IP.
-func (s *Server) rateLimitMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key, _, err := net.SplitHostPort(r.RemoteAddr) // "[::1]:54321" → "[::1]"
+func (s *Server) rateLimitMW() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key, _, err := net.SplitHostPort(c.Request.RemoteAddr) // "[::1]:54321" → "[::1]"
 		if err != nil {
-			key = r.RemoteAddr // на всякий случай
+			key = c.Request.RemoteAddr // на всякий случай
 		}
-		if c := claimsFromCtx(r.Context()); c != nil {
-			key = c.UserID // авторизованных считаем по user_id, не по IP
+		if cl := claimsOf(c); cl != nil {
+			key = cl.UserID // авторизованных считаем по user_id, не по IP
 		}
-		ok, err := s.limiter.Allow(r.Context(), key)
+		ok, err := s.limiter.Allow(c.Request.Context(), key)
 		if err != nil {
 			// fail-open: Redis упал — пропускаем, но орём в лог
 			s.log.Error("rate limit недоступен, пропускаю (fail-open)", "err", err)
-			next.ServeHTTP(w, r)
+			c.Next()
 			return
 		}
 		if !ok {
-			s.writeError(w, r, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED", "слишком много запросов, притормози")
+			s.writeError(c, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED", "слишком много запросов, притормози")
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
+}
+
+// requireRole — гейт по роли из JWT (role кладёт auth-service при выпуске
+// токена). Навешивается на офицерские роуты KYC: у CLIENT доступ к
+// очереди заявок и вердиктам закрыт ещё до входа в хендлер.
+func (s *Server) requireRole(role string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cl := claimsOf(c) // authMW уже отработал и положил claims
+		if cl == nil || cl.Role != role {
+			s.writeError(c, http.StatusForbidden, "PERMISSION_DENIED", "требуется роль "+role)
+			return
+		}
+		c.Next()
+	}
 }
